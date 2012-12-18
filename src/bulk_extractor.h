@@ -251,7 +251,7 @@ void set_scanner_enabled(const string name,bool enable);
 
 /* flex-based scanners */
 extern "C" scanner_t scan_email;  
-//extern "C" scanner_t scan_httpheader;
+extern "C" scanner_t scan_httpheader; //Experimental
 extern "C" scanner_t scan_accts;  
 extern "C" scanner_t scan_kml;
 extern "C" scanner_t scan_gps;

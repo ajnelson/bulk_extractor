@@ -1,6 +1,6 @@
 bin_PROGRAMS   = bulk_extractor 
 EXTRA_PROGRAMS = stand
-CLEANFILES     = scan_accts.cpp scan_email.cpp scan_gps.cpp scan_base16.cpp *.d
+CLEANFILES     = scan_accts.cpp scan_email.cpp scan_httpheader.cpp scan_gps.cpp scan_base16.cpp *.d
 
 AM_CPPFLAGS = -I${top_srcdir}/src/be13_api
 
@@ -53,7 +53,8 @@ flex_scanners = \
 	scan_accts.flex \
 	scan_base16.flex \
 	scan_email.flex \
-	scan_gps.flex 
+	scan_gps.flex \
+        scan_httpheader.flex
 
 bulk_scanners = \
 	scan_aes.cpp \

@@ -138,7 +138,7 @@ scanner_t *scanners_builtin[] = {
     scan_base64,
     scan_kml,
     scan_email,
-    //    scan_httpheader,
+    scan_httpheader, // Experimental
     scan_gps,
     scan_net,
     scan_find,
