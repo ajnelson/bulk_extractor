@@ -9,49 +9,40 @@
  */
 
 #include "config.h"
-#include "be13_api/bulk_extractor_i.h"
+#include "bulk_extractor_i.h"
+#include "utils.h"
+#include "histogram.h"
 
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
-/* Needed for flex: */
-#undef 	ECHO
-#define	ECHO {}
-#define YY_SKIP_YYWRAP
-#define YY_DECL int MyHTTPHeaderFlexLexer::yylex()
-
-class MyHTTPHeaderFlexLexer : public httpheaderFlexLexer {
-      public:
-      MyHTTPHeaderFlexLexer(const sbuf_t &sbuf_):sbuf(sbuf_){
-	  this->pos		= 0;
-          this->point		= 0;
-	  this->eof             = false;
+#include "sbuf_flex_scanner.h"
+class httpheader_scanner: public sbuf_scanner {
+public:
+      httpheader_scanner(const scanner_params &sp):
+        sbuf_scanner(&sp.sbuf),
+        domain_recorder(),
+        url_recorder(),
+        ether_recorder(),
+        ip_written(0),
+        ip_tested(0){
+          httpheader_recorder  = sp.fs.get_name("httpheader");
+	  domain_recorder = sp.fs.get_name("domain");
+	  url_recorder    = sp.fs.get_name("url");
+	  ether_recorder  = sp.fs.get_name("ether");
       }
-      const sbuf_t &sbuf;
-      size_t pos;
-      size_t point;
-      bool eof;
       class feature_recorder *httpheader_recorder;
-      virtual int LexerInput(char *buf,int max_size_){  /* signature can't be changed */
-      	      if(eof) return 0;
-      	      unsigned int max_size = max_size_ > 0 ? max_size_ : 0;
-      	      int count = 0;
-      	      if(max_size + point > sbuf.bufsize){
-	         max_size = sbuf.bufsize - point;
-              }
-	      while(max_size>0){
-	         *buf = (char)sbuf.buf[point];
-		 buf++;
-		 point++;
-		 max_size--;
-		 count++;
-  	      }
-	      return count;
-      }
-      virtual int yylex();
+      class feature_recorder *domain_recorder;
+      class feature_recorder *url_recorder;
+      class feature_recorder *ether_recorder;
+      volatile long ip_written;
+      volatile long ip_tested;
 };
 
-int httpheaderFlexLexer::yylex(){return 0;}
+#define YY_EXTRA_TYPE httpheader_scanner *             /* holds our class pointer */
+YY_EXTRA_TYPE yyhttpheader_get_extra (yyscan_t yyscanner );    /* redundent declaration */
+inline class httpheader_scanner *get_extra(yyscan_t yyscanner) {return yyhttpheader_get_extra(yyscanner);}
 
 
 /**
@@ -62,13 +53,12 @@ int httpheaderFlexLexer::yylex(){return 0;}
 
 %}
 
-%option c++
 %option noyywrap
 %option 8bit
 %option batch
 %option pointer
 %option noyymore
-%option prefix="httpheader"
+%option prefix="yyhttpheader_"
 
 SPECIALS	[()<>@,;:\\".\[\]]
 ATOMCHAR	([a-zA-Z0-9`~!#$%^&*\-_=+{}|?])
@@ -154,13 +144,15 @@ HTTP_STATUS_LINE	{HTTP_VERSION}[ ]{HTTP_STATUS_CODE}[ ]{HTTP_REASON_PHRASE}
 %%
 
 {HTTP_REQUEST_LINE} {
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
 {HTTP_STATUS_LINE} {
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
  /*
@@ -172,16 +164,18 @@ HTTP_STATUS_LINE	{HTTP_VERSION}[ ]{HTTP_STATUS_CODE}[ ]{HTTP_REASON_PHRASE}
   * causes the NFA rule set to explode to >32000 rules, making flex refuse to compile.
   */
 (Server|User-Agent):[ \t]?({PC}{1,80}) {
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
  /*
   * RFC 2616, Section 14.23
   */
 Host:[ \t]?([a-zA-Z0-9._:]{1,256}) {   
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng; 
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng; 
 }
 
  /*
@@ -197,8 +191,9 @@ Host:[ \t]?([a-zA-Z0-9._:]{1,256}) {
   * SLG: Limited to 80 characters
   */
 (Accept|Accept-Ranges|Authorization|Cache-Control|Content-Location|Etag|Expect|Keep-Alive|If-Match|If-None-Match|If-Range|Pragma|Proxy-Authenticate|Proxy-Authorization|Referer|TE|Transfer-Encoding|Warning|WWW-Authenticate):[ \t]?({PC}){1,80} {
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
 
@@ -219,31 +214,33 @@ Host:[ \t]?([a-zA-Z0-9._:]{1,256}) {
   * From: should contain an email address.
   */
 (Accept-Charset|Accept-Encoding|Accept-Language|Age|Allow|Connection|Content-Encoding|Content-Language|Content-MD5|Content-Range|Content-Type|Cookie|Date|From|If-Modified-Since|If-Unmodified-Since|Last-Modified|Range|Retry-After|Set-Cookie|Trailer|Upgrade|Vary):[ \t]?({XPC}){1,80} {
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
 Via:[ \t]?{HTTP_COMMENT}{1,256}	{
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
  /*
   * RFC 2616, Sections 14.13 and 14.31
   */
 (Content-Length|Max-Forwards):[ \t]?[0-9]{1,12} {
-    httpheader_recorder->write_buf(sbuf,pos,yyleng);
-    pos += yyleng;
+    httpheader_scanner &s = * yyhttpheader_get_extra(yyscanner);
+    s.httpheader_recorder->write_buf(SBUF,s.pos,yyleng);
+    s.pos += yyleng;
 }
 
 .|\n { 
      /**
-      * The no-match rule.
+      * The no-match rule. VERY IMPORTANT!
       * If we are beyond the end of the margin, call it quits.
       */
-     /* putchar(yytext[0]); */ /* Uncomment for debugging */
-     pos++; 
-     if(pos>=sbuf.pagesize) eof=true;
+     httpheader_scanner &s = *yyhttpheader_get_extra(yyscanner);	      
+     s.pos++; 
 }
 %%
 
@@ -255,17 +252,33 @@ void scan_httpheader(const class scanner_params &sp,const recursion_control_bloc
         assert(sp.info->si_version==scanner_info::CURRENT_SI_VERSION);
         sp.info->name		= "httpheader";
         sp.info->author         = "Alex Nelson";
-        sp.info->description    = "Searches for HTTP header fields";
-        sp.info->scanner_version= "1.0";
+        sp.info->description    = "(EXPERIMENTAL) Searches for HTTP header fields";
+        sp.info->scanner_version= "1.1";
         sp.info->flags = scanner_info::SCANNER_DISABLED;
+
+        /* define the feature files this scanner created */
         sp.info->feature_names.insert("httpheader");
+        sp.info->feature_names.insert("domain");
+        sp.info->feature_names.insert("url");
+        sp.info->feature_names.insert("ether");
+
+        /* define the histograms to make */
+
         return;
     }
+    if(sp.phase==scanner_params::shutdown){
+        //printf("ip_written=%ld  ip_tested=%ld\n",ip_written,ip_tested);
+        return; 
+    }
     if(sp.phase==scanner_params::scan){
-        MyHTTPHeaderFlexLexer  lexer(sp.sbuf);
-    	lexer.httpheader_recorder  = sp.fs.get_name("httpheader");
-	while(lexer.yylex() != 0) {
-    	}
+        /* Set up the buffer. Scan it. Exit */
+        httpheader_scanner lexer(sp);
+        yyscan_t scanner;
+        yyhttpheader_lex_init(&scanner);
+        yyhttpheader_set_extra(&lexer,scanner);
+        yyhttpheader_lex(scanner);
+        yyhttpheader_lex_destroy(scanner);
+        (void)yyunput;			// avoids defined but not used
     }
 }
 
