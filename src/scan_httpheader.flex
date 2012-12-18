@@ -247,7 +247,7 @@ Via:[ \t]?{HTTP_COMMENT}{1,256}	{
 extern "C"
 void scan_httpheader(const class scanner_params &sp,const recursion_control_block &rcb)
 {
-    assert(sp.version==scanner_params::CURRENT_SP_VERSION);      
+    assert(sp.sp_version==scanner_params::CURRENT_SP_VERSION);      
     if(sp.phase==scanner_params::startup){
         assert(sp.info->si_version==scanner_info::CURRENT_SI_VERSION);
         sp.info->name		= "httpheader";
